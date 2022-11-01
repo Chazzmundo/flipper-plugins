@@ -14,6 +14,10 @@ if ([string]::IsNullOrEmpty($emailPassword)) {
 }
 <# End of Param checking #>
 
+Import-Module Microsoft.Powershell.LocalAccounts
+Import-Module Microsoft.Powershell.Archive
+Import-Module Microsoft.PowerShell.Management
+Import-Module PSReadLine
 
 <# Running code - do not edit the below #>
 $isRunningAsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
